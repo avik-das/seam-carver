@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #define STB_IMAGE_IMPLEMENTATION
 #define STB_IMAGE_WRITE_IMPLEMENTATION
@@ -284,23 +285,64 @@ int draw_image(
 
 // MAIN ///////////////////////////////////////////////////////////////////////
 
+enum mode {
+    MODE_INVALID,
+    MODE_VISUALIZE_ENERGY,
+    MODE_VISUALIZE_MINIMAL_SEAM,
+    MODE_RETARGET
+};
+
+enum mode mode_from_command_line_argument(const char *arg) {
+    if (strcmp(arg, "energy") == 0) {
+        return MODE_VISUALIZE_ENERGY;
+    } else if (strcmp(arg, "seam") == 0) {
+        return MODE_VISUALIZE_MINIMAL_SEAM;
+    } else if (strcmp(arg, "retarget") == 0) {
+        return MODE_RETARGET;
+    } else {
+        return MODE_INVALID;
+    }
+}
+
+void show_usage(const char *program) {
+    fprintf(
+            stderr,
+            "USAGE:\n"
+            "  %s energy <input-filename> <output-filename>\n"
+            "  %s seam <input-filename> <output-filename>\n"
+            "  %s retarget <input-filename> <output-filename>\n",
+            program,
+            program,
+            program);
+}
+
 int main(int argc, char **argv) {
-    if (argc != 3) {
-        fprintf(
-                stderr,
-                "USAGE: %s <input-filename> <output-filename>\n",
-                argv[0]);
+    if (argc != 4) {
+        show_usage(argv[0]);
         return 1;
     }
 
+    enum mode mode = mode_from_command_line_argument(argv[1]);
+    if (mode == MODE_INVALID) {
+        show_usage(argv[0]);
+        return 1;
+    }
+
+    const char *input_filename = argv[2];
+    const char *output_filename = argv[3];
+
     int result = 0;
 
-    const char *input_filename = argv[1];
-    const char *output_filename = argv[2];
+    unsigned char *data = NULL;
+    unsigned int *energy = NULL;
+    struct seam_link *vertical_seam_links = NULL;
+    int *minimal_vertical_seam = NULL;
+    unsigned char *output_data = NULL;
+
     printf("Reading '%s'\n", input_filename);
 
     int w, h, n;
-    unsigned char *data = stbi_load(input_filename, &w, &h, &n, 3);
+    data = stbi_load(input_filename, &w, &h, &n, 3);
     if (!data) {
         fprintf(stderr, "Unable to read '%s'\n", input_filename);
 
@@ -310,47 +352,44 @@ int main(int argc, char **argv) {
 
     printf("Loaded %dx%d image\n", w, h);
 
-    unsigned int *energy = compute_energy(data, w, h);
+    energy = compute_energy(data, w, h);
     if (!energy) {
         result = 1;
         goto cleanup;
     }
 
-    struct seam_link *vertical_seam_links =
-        compute_vertical_seam_links(energy, w, h);
+    if (mode == MODE_VISUALIZE_ENERGY) {
+        result = !write_energy(energy, w, h, output_filename);
+        goto cleanup;
+    }
+
+    vertical_seam_links = compute_vertical_seam_links(energy, w, h);
     if (!vertical_seam_links) {
         result = 1;
         goto cleanup;
     }
 
-    int *minimal_vertical_seam = get_minimal_seam(vertical_seam_links, w, h);
+    minimal_vertical_seam = get_minimal_seam(vertical_seam_links, w, h);
 
-    unsigned char *output_data =
+    if (mode == MODE_VISUALIZE_MINIMAL_SEAM) {
+        result = !draw_vertical_seam(
+                data,
+                minimal_vertical_seam,
+                w,
+                h,
+                output_filename);
+        goto cleanup;
+    }
+
+    output_data =
         image_after_vertical_seam_removal(data, minimal_vertical_seam, w, h);
     if (!output_data) {
         result = 1;
         goto cleanup;
     }
 
-    // Three options for the ouput. In the future, these options should be
-    // selectable by the user via command line arguments.
-
-    // 1. Visualize the energy function for the input image.
-    // if (!write_energy(energy, w, h, output_filename)) {
-
-    // 2. Visualize the minimal vertical seam.
-    // if (!draw_vertical_seam(
-    //             data,
-    //             minimal_vertical_seam,
-    //             w,
-    //             h,
-    //             output_filename)) {
-
-    // 3. Draw the image after removing the minimal seam.
-    if (!draw_image(output_data, w - 1, h, output_filename)) {
-        result = 1;
-        goto cleanup;
-    }
+    result = !draw_image(output_data, w - 1, h, output_filename);
+    goto cleanup;
 
 cleanup:
     if (data) { stbi_image_free(data); }
