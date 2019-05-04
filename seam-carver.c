@@ -215,7 +215,7 @@ int write_energy(
 
     printf("Writing to '%s'\n", filename);
     if (!stbi_write_jpg(filename, w, h, 1, energy_normalized, 80)) {
-        fprintf(stderr, "Unable to write output\n");
+        fprintf(stderr, "Unable to write output (%d)\n", __LINE__);
 
         result = 1;
         goto cleanup;
@@ -254,11 +254,9 @@ int draw_vertical_seam(
         data_with_seams[i + 2] = 0;
     }
 
-    // Write to a PNG in order to preserve the crisp seam.
-
     printf("Writing to '%s'\n", filename);
-    if (!stbi_write_png(filename, w, h, 3, data_with_seams, w * 3)) {
-        fprintf(stderr, "Unable to write output\n");
+    if (!stbi_write_jpg(filename, w, h, 3, data_with_seams, 80)) {
+        fprintf(stderr, "Unable to write output (%d)\n", __LINE__);
 
         result = 1;
         goto cleanup;
@@ -275,12 +273,8 @@ int draw_image(
         int w,
         int h,
         const char *filename) {
-    // No matter what the input file format was, make sure to write to a PNG.
-    // This will ensure repeated retargetings one after another won't introduce
-    // artifacts that would have been introduced with JPG.
-
     printf("Writing %dx%d image to '%s'\n", w, h, filename);
-    return stbi_write_png(filename, w, h, 3, data, w * 3);
+    return stbi_write_jpg(filename, w, h, 3, data, 80);
 }
 
 // MAIN ///////////////////////////////////////////////////////////////////////
@@ -308,12 +302,63 @@ void show_usage(const char *program) {
     fprintf(
             stderr,
             "USAGE:\n"
-            "  %s energy <input-filename> <output-filename>\n"
-            "  %s seam <input-filename> <output-filename>\n"
-            "  %s retarget <input-filename> <output-filename>\n",
-            program,
-            program,
+            "  %s <input-filename> <output-directory> <num-iterations>\n",
             program);
+}
+
+unsigned char * run_iteration(
+        const char *output_directory,
+        const unsigned char *data,
+        int w,
+        int h,
+        int iteration) {
+
+    unsigned int *energy = NULL;
+    struct seam_link *vertical_seam_links = NULL;
+    int *minimal_vertical_seam = NULL;
+    unsigned char *output_data = NULL;
+
+    char output_filename[1024];
+
+    energy = compute_energy(data, w, h);
+    if (!energy) { goto cleanup; }
+
+    if (iteration == 0) {
+        snprintf(output_filename, 1024, "%s/img-energy.jpg", output_directory);
+        if (write_energy(energy, w, h, output_filename)) {
+            goto cleanup;
+        }
+    }
+
+    vertical_seam_links = compute_vertical_seam_links(energy, w, h);
+    if (!vertical_seam_links) { goto cleanup; }
+
+    minimal_vertical_seam = get_minimal_seam(vertical_seam_links, w, h);
+
+    snprintf(
+            output_filename,
+            1024,
+            "%s/img-seam-%04d.jpg",
+            output_directory,
+            iteration);
+    if (draw_vertical_seam(
+                data,
+                minimal_vertical_seam,
+                w,
+                h,
+                output_filename)) {
+        goto cleanup;
+    }
+
+    output_data =
+        image_after_vertical_seam_removal(data, minimal_vertical_seam, w, h);
+
+cleanup:
+    if (energy) { free(energy); }
+    if (vertical_seam_links) { free(vertical_seam_links); }
+    if (minimal_vertical_seam) { free(minimal_vertical_seam); }
+
+    return output_data;
 }
 
 int main(int argc, char **argv) {
@@ -322,28 +367,20 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    enum mode mode = mode_from_command_line_argument(argv[1]);
-    if (mode == MODE_INVALID) {
-        show_usage(argv[0]);
-        return 1;
-    }
-
-    const char *input_filename = argv[2];
-    const char *output_filename = argv[3];
+    const char *input_filename = argv[1];
+    const char *output_directory = argv[2];
+    int num_iterations = atoi(argv[3]);
 
     int result = 0;
 
+    unsigned char *initial_img = NULL;
     unsigned char *data = NULL;
-    unsigned int *energy = NULL;
-    struct seam_link *vertical_seam_links = NULL;
-    int *minimal_vertical_seam = NULL;
-    unsigned char *output_data = NULL;
 
     printf("Reading '%s'\n", input_filename);
 
     int w, h, n;
-    data = stbi_load(input_filename, &w, &h, &n, 3);
-    if (!data) {
+    initial_img = stbi_load(input_filename, &w, &h, &n, 3);
+    if (!initial_img) {
         fprintf(stderr, "Unable to read '%s'\n", input_filename);
 
         result = 1;
@@ -352,51 +389,35 @@ int main(int argc, char **argv) {
 
     printf("Loaded %dx%d image\n", w, h);
 
-    energy = compute_energy(data, w, h);
-    if (!energy) {
-        result = 1;
-        goto cleanup;
+    data = initial_img;
+    for (int i = 0; i < num_iterations; i++) {
+        unsigned char *next_data =
+            run_iteration(output_directory, data, w, h, i);
+
+        if (!next_data) {
+            fprintf(stderr, "Error running iteration %d\n", i);
+
+            result = 1;
+            goto cleanup;
+        }
+
+        if (i > 0) { free(data); }
+        data = next_data;
+        w--;
     }
 
-    if (mode == MODE_VISUALIZE_ENERGY) {
-        result = !write_energy(energy, w, h, output_filename);
-        goto cleanup;
+    char resized_output_filename[1024];
+    snprintf(resized_output_filename, 1024, "%s/img.jpg", output_directory);
+    if (!draw_image(data, w, h, resized_output_filename)) {
+        fprintf(
+                stderr,
+                "\033[1;31mUnable to write %s\033[0m\n",
+                resized_output_filename);
     }
-
-    vertical_seam_links = compute_vertical_seam_links(energy, w, h);
-    if (!vertical_seam_links) {
-        result = 1;
-        goto cleanup;
-    }
-
-    minimal_vertical_seam = get_minimal_seam(vertical_seam_links, w, h);
-
-    if (mode == MODE_VISUALIZE_MINIMAL_SEAM) {
-        result = !draw_vertical_seam(
-                data,
-                minimal_vertical_seam,
-                w,
-                h,
-                output_filename);
-        goto cleanup;
-    }
-
-    output_data =
-        image_after_vertical_seam_removal(data, minimal_vertical_seam, w, h);
-    if (!output_data) {
-        result = 1;
-        goto cleanup;
-    }
-
-    result = !draw_image(output_data, w - 1, h, output_filename);
-    goto cleanup;
 
 cleanup:
-    if (data) { stbi_image_free(data); }
-    if (energy) { free(energy); }
-    if (vertical_seam_links) { free(vertical_seam_links); }
-    if (minimal_vertical_seam) { free(minimal_vertical_seam); }
-    if (output_data) { free(output_data); }
+    if (initial_img) { stbi_image_free(initial_img); }
+    if (data) { free(data); }
 
     return result;
 }
