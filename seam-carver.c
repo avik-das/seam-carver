@@ -9,12 +9,6 @@
 
 // ENERGY /////////////////////////////////////////////////////////////////////
 
-unsigned int absdelta(int d0, int d1) {
-    return d0 > d1
-        ? d0 - d1
-        : d1 - d0;
-}
-
 unsigned int energy_at(
         const unsigned char *data,
         int w,
@@ -25,18 +19,18 @@ unsigned int energy_at(
     int x1 = x == w - 1 ? x : x + 1;
     int ix0 = (y * w + x0) * 3;
     int ix1 = (y * w + x1) * 3;
-    unsigned int dxr = absdelta(data[ix0    ], data[ix1    ]);
-    unsigned int dxg = absdelta(data[ix0 + 1], data[ix1 + 1]);
-    unsigned int dxb = absdelta(data[ix0 + 2], data[ix1 + 2]);
+    unsigned int dxr = data[ix0    ] - data[ix1    ];
+    unsigned int dxg = data[ix0 + 1] - data[ix1 + 1];
+    unsigned int dxb = data[ix0 + 2] - data[ix1 + 2];
     unsigned int dx = dxr * dxr + dxg * dxg + dxb * dxb;
 
     int y0 = y == 0 ? y : y - 1;
     int y1 = y == h - 1 ? y : y + 1;
     int iy0 = (y0 * w + x) * 3;
     int iy1 = (y1 * w + x) * 3;
-    unsigned int dyr = absdelta(data[iy0    ], data[iy1    ]);
-    unsigned int dyg = absdelta(data[iy0 + 1], data[iy1 + 1]);
-    unsigned int dyb = absdelta(data[iy0 + 2], data[iy1 + 2]);
+    unsigned int dyr = data[iy0    ] - data[iy1    ];
+    unsigned int dyg = data[iy0 + 1] - data[iy1 + 1];
+    unsigned int dyb = data[iy0 + 2] - data[iy1 + 2];
     unsigned int dy = dyr * dyr + dyg * dyg + dyb * dyb;
 
     return dx + dy;
