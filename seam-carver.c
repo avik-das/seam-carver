@@ -273,25 +273,6 @@ int draw_image(
 
 // MAIN ///////////////////////////////////////////////////////////////////////
 
-enum mode {
-    MODE_INVALID,
-    MODE_VISUALIZE_ENERGY,
-    MODE_VISUALIZE_MINIMAL_SEAM,
-    MODE_RETARGET
-};
-
-enum mode mode_from_command_line_argument(const char *arg) {
-    if (strcmp(arg, "energy") == 0) {
-        return MODE_VISUALIZE_ENERGY;
-    } else if (strcmp(arg, "seam") == 0) {
-        return MODE_VISUALIZE_MINIMAL_SEAM;
-    } else if (strcmp(arg, "retarget") == 0) {
-        return MODE_RETARGET;
-    } else {
-        return MODE_INVALID;
-    }
-}
-
 void show_usage(const char *program) {
     fprintf(
             stderr,
