@@ -392,7 +392,7 @@ int main(int argc, char **argv) {
 
 cleanup:
     if (initial_img) { stbi_image_free(initial_img); }
-    if (data) { free(data); }
+    if (data && data != initial_img) { free(data); }
 
     return result;
 }
