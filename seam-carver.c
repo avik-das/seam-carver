@@ -7,49 +7,100 @@
 #include "stb_image.h"
 #include "stb_image_write.h"
 
-// ENERGY /////////////////////////////////////////////////////////////////////
+//  COST //////////////////////////////////////////////////////////////////////
 
-unsigned int energy_at(
+unsigned int pixel_difference_of(
         const unsigned char *data,
         int w,
         int h,
-        int x,
-        int y) {
-    int x0 = x == 0 ? x : x - 1;
-    int x1 = x == w - 1 ? x : x + 1;
-    int ix0 = (y * w + x0) * 3;
-    int ix1 = (y * w + x1) * 3;
-    unsigned int dxr = data[ix0    ] - data[ix1    ];
-    unsigned int dxg = data[ix0 + 1] - data[ix1 + 1];
-    unsigned int dxb = data[ix0 + 2] - data[ix1 + 2];
-    unsigned int dx = dxr * dxr + dxg * dxg + dxb * dxb;
+        int x0,
+        int y0,
+        int x1,
+        int y1) {
+    int i0 = (y0 * w + x0) * 3;
+    int i1 = (y1 * w + x1) * 3;
 
-    int y0 = y == 0 ? y : y - 1;
-    int y1 = y == h - 1 ? y : y + 1;
-    int iy0 = (y0 * w + x) * 3;
-    int iy1 = (y1 * w + x) * 3;
-    unsigned int dyr = data[iy0    ] - data[iy1    ];
-    unsigned int dyg = data[iy0 + 1] - data[iy1 + 1];
-    unsigned int dyb = data[iy0 + 2] - data[iy1 + 2];
-    unsigned int dy = dyr * dyr + dyg * dyg + dyb * dyb;
+    unsigned int dr = data[i0    ] - data[i1    ];
+    unsigned int dg = data[i0 + 1] - data[i1 + 1];
+    unsigned int db = data[i0 + 2] - data[i1 + 2];
 
-    return dx + dy;
+    return dr * dr + dg * dg + db * db;
 }
 
-unsigned int * compute_energy(const unsigned char *data, int w, int h) {
-    unsigned int *energy = malloc(w * h * sizeof(unsigned int));
-    if (!energy) {
+struct costs {
+    unsigned int *cost_l;
+    unsigned int *cost_u;
+    unsigned int *cost_r;
+};
+
+struct costs * compute_costs(const unsigned char *data, int w, int h) {
+    struct costs *costs = NULL;
+    unsigned int *cost_l = NULL;
+    unsigned int *cost_u = NULL;
+    unsigned int *cost_r = NULL;
+
+    costs = malloc(sizeof(struct costs));
+    if (!costs) {
         fprintf(stderr, "Unable to allocate memory (%d)\n", __LINE__);
-        return NULL;
+        goto error;
     }
+
+    cost_l = malloc(w * h * sizeof(unsigned int));
+    if (!cost_l) {
+        fprintf(stderr, "Unable to allocate memory (%d)\n", __LINE__);
+        goto error;
+    }
+
+    cost_u = malloc(w * h * sizeof(unsigned int));
+    if (!cost_u) {
+        fprintf(stderr, "Unable to allocate memory (%d)\n", __LINE__);
+        goto error;
+    }
+
+    cost_r = malloc(w * h * sizeof(unsigned int));
+    if (!cost_r) {
+        fprintf(stderr, "Unable to allocate memory (%d)\n", __LINE__);
+        goto error;
+    }
+
+    costs->cost_l = cost_l;
+    costs->cost_u = cost_u;
+    costs->cost_r = cost_r;
+
+#define DIFF(x0, y0, x1, y1) \
+    pixel_difference_of(data, w, h, x0, y0, x1, y1)
 
     for (int y = 0; y < h; y++)
     for (int x = 0; x < w; x++) {
-        int i = y * w + x;
-        energy[i] = energy_at(data, w, h, x, y);
+        unsigned int i = y * w + x;
+
+        unsigned int xl = (x > 0    ) ? (x - 1) : x;
+        unsigned int xr = (x < w - 1) ? (x + 1) : x;
+
+        unsigned int current_row_diff = DIFF(xl, y, xr, y);
+
+        // First row is computed specially. The first row cannot connect to a
+        // previous row, so it makes no sense to consider what happens in such
+        // a case. Instead, only the effect of removing the current pixel and
+        // therefore connecting the left and right pixels together is
+        // considered as part of `cost_u`.
+        //
+        // See `compute_vertical_seam_links` to see how this cost is
+        // incorporated into the seam finding.
+        cost_l[i] = y > 0 ? current_row_diff + DIFF(x, y - 1, xl, y) : 0;
+        cost_u[i] = current_row_diff;
+        cost_r[i] = y > 0 ? current_row_diff + DIFF(x, y - 1, xr, y) : 0;
     }
 
-    return energy;
+    return costs;
+
+error:
+    if (costs) { free(costs); }
+    if (cost_l) { free(cost_l); }
+    if (cost_u) { free(cost_u); }
+    if (cost_r) { free(cost_r); }
+
+    return NULL;
 }
 
 // SEAMS //////////////////////////////////////////////////////////////////////
@@ -58,15 +109,15 @@ struct seam_link {
     // The X and Y coordinates of the link are inferred by the position of the
     // link in a links array.
 
-    // The minimal energy for any connected seam ending at this position.
-    unsigned int energy;
+    // The minimal cost for any connected seam ending at this position.
+    unsigned int cost;
 
     // The parent X coordinate for vertical seams, Y for horizontal seams.
     int parent_coordinate;
 };
 
 struct seam_link * compute_vertical_seam_links(
-        const unsigned int *energy,
+        const struct costs *costs,
         int w,
         int h) {
     struct seam_link *links = malloc(w * h * sizeof(struct seam_link));
@@ -76,8 +127,12 @@ struct seam_link * compute_vertical_seam_links(
     }
 
     for (int x = 0; x < w; x++) {
+        // The first row cannot connect to a previous row, so it makes no sense
+        // to consider what happens in such a case. Instead, only the effect of
+        // removing the current pixel and therefore connecting the left and
+        // right pixels together is considered by taking into account `cost_u`.
         links[x] = (struct seam_link) {
-            .energy = energy[x],
+            .cost = costs->cost_u[x],
             .parent_coordinate = -1
         };
     }
@@ -85,22 +140,37 @@ struct seam_link * compute_vertical_seam_links(
     for (int y = 1; y < h; y++)
     for (int x = 0; x < w; x++) {
         int i = y * w + x;
+        int j = (y - 1) * w + x;
 
-        int min_parent_energy = INT_MAX;
+        int min_cost = INT_MAX;
         int min_parent_x = -1;
 
-        int parent_x = x == 0 ? x : x - 1;
-        int parent_x_end = x == w - 1 ? x : x + 1;
-        for (; parent_x <= parent_x_end; parent_x++) {
-            int candidate_energy = links[(y - 1) * w + parent_x].energy;
-            if (candidate_energy < min_parent_energy) {
-                min_parent_energy = candidate_energy;
-                min_parent_x = parent_x;
+        // Consider joining with top-left pixel
+        if (x > 0) {
+            min_cost = links[j - 1].cost + costs->cost_l[i];
+            min_parent_x = x - 1;
+        }
+
+        // Consider joining with top pixel
+        {
+            int candidate_cost = links[j].cost + costs->cost_u[i];
+            if (candidate_cost < min_cost) {
+                min_cost = candidate_cost;
+                min_parent_x = x;
+            }
+        }
+
+        // Consider joining with top-right pixel
+        if (x < w - 1) {
+            int candidate_cost = links[j + 1].cost + costs->cost_r[i];
+            if (candidate_cost < min_cost) {
+                min_cost = candidate_cost;
+                min_parent_x = x + 1;
             }
         }
 
         links[i] = (struct seam_link) {
-            .energy = energy[i] + min_parent_energy,
+            .cost = min_cost,
             .parent_coordinate = min_parent_x
         };
     }
@@ -120,13 +190,13 @@ int * get_minimal_seam(
     }
 
     int min_coordinate = -1;
-    int min_energy = INT_MAX;
+    int min_cost = INT_MAX;
 
     for (int coordinate = 0; coordinate < num_seams; coordinate++) {
         int i = num_seams * (seam_length - 1) + coordinate;
-        if (seam_links[i].energy < min_energy) {
+        if (seam_links[i].cost < min_cost) {
             min_coordinate = coordinate;
-            min_energy = seam_links[i].energy;
+            min_cost = seam_links[i].cost;
         }
     }
 
@@ -179,36 +249,36 @@ unsigned char * image_after_vertical_seam_removal(
 
 // OUTPUT /////////////////////////////////////////////////////////////////////
 
-int write_energy(
-        const unsigned int *energy,
+int write_cost(
+        const unsigned int *cost,
         int w,
         int h,
         const char *filename) {
     int result = 0;
 
-    unsigned char *energy_normalized = malloc(w * h);
-    if (!energy_normalized) {
+    unsigned char *cost_normalized = malloc(w * h);
+    if (!cost_normalized) {
         fprintf(stderr, "Unable to allocate memory (%d)\n", __LINE__);
 
         result = 1;
         goto cleanup;
     }
 
-    int max_energy = 1;
+    unsigned int max_cost = 1;
     for (int y = 0; y < h; y++)
     for (int x = 0; x < w; x++) {
         int i = y * w + x;
-        max_energy = energy[i] > max_energy ? energy[i] : max_energy;
+        max_cost = cost[i] > max_cost ? cost[i] : max_cost;
     }
 
     for (int y = 0; y < h; y++)
     for (int x = 0; x < w; x++) {
         int i = y * w + x;
-        energy_normalized[i] = (char) ((double) energy[i] / max_energy * 255);
+        cost_normalized[i] = (char) ((double) cost[i] / max_cost * 255);
     }
 
     printf("Writing to '%s'\n", filename);
-    if (!stbi_write_jpg(filename, w, h, 1, energy_normalized, 80)) {
+    if (!stbi_write_jpg(filename, w, h, 1, cost_normalized, 80)) {
         fprintf(stderr, "Unable to write output (%d)\n", __LINE__);
 
         result = 1;
@@ -216,7 +286,7 @@ int write_energy(
     }
 
 cleanup:
-    if (energy_normalized) { free(energy_normalized); }
+    if (cost_normalized) { free(cost_normalized); }
 
     return result;
 }
@@ -288,24 +358,34 @@ unsigned char * run_iteration(
         int h,
         int iteration) {
 
-    unsigned int *energy = NULL;
+    struct costs *costs = NULL;
     struct seam_link *vertical_seam_links = NULL;
     int *minimal_vertical_seam = NULL;
     unsigned char *output_data = NULL;
 
     char output_filename[1024];
 
-    energy = compute_energy(data, w, h);
-    if (!energy) { goto cleanup; }
+    costs = compute_costs(data, w, h);
+    if (!costs) { goto cleanup; }
 
     if (iteration == 0) {
-        snprintf(output_filename, 1024, "%s/img-energy.jpg", output_directory);
-        if (write_energy(energy, w, h, output_filename)) {
+        snprintf(output_filename, 1024, "%s/img-cost-l.jpg", output_directory);
+        if (write_cost(costs->cost_l, w, h, output_filename)) {
+            goto cleanup;
+        }
+
+        snprintf(output_filename, 1024, "%s/img-cost-u.jpg", output_directory);
+        if (write_cost(costs->cost_u, w, h, output_filename)) {
+            goto cleanup;
+        }
+
+        snprintf(output_filename, 1024, "%s/img-cost-r.jpg", output_directory);
+        if (write_cost(costs->cost_r, w, h, output_filename)) {
             goto cleanup;
         }
     }
 
-    vertical_seam_links = compute_vertical_seam_links(energy, w, h);
+    vertical_seam_links = compute_vertical_seam_links(costs, w, h);
     if (!vertical_seam_links) { goto cleanup; }
 
     minimal_vertical_seam = get_minimal_seam(vertical_seam_links, w, h);
@@ -329,7 +409,13 @@ unsigned char * run_iteration(
         image_after_vertical_seam_removal(data, minimal_vertical_seam, w, h);
 
 cleanup:
-    if (energy) { free(energy); }
+    if (costs) {
+        free(costs->cost_l);
+        free(costs->cost_u);
+        free(costs->cost_r);
+        free(costs);
+    }
+
     if (vertical_seam_links) { free(vertical_seam_links); }
     if (minimal_vertical_seam) { free(minimal_vertical_seam); }
 

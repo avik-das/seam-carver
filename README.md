@@ -9,6 +9,8 @@ This implementation is designed for my article on real-world applications of dyn
 
 - Ability to create visualizations. This is why I didn't worry about writing to and re-reading from intermediate files. While inefficient, I need to produce intermediate files for the visualizations anyway, so I didn't bother optimizing this process.
 
+**NOTE:** this branch implements the forward energy variation described in the follow-up paper [Improved seam carving for video retargeting](https://dl.acm.org/citation.cfm?id=1360615). No support for videos have been implemented. I've chosen to branch from the main implementation because enough parts of the algorithm have changed. In the future, I may want to find a way to support both the older "backward energy" and the newer "forward energy" variants in the same branch with the ability to switch between the two at runtime.
+
 Quick start
 -----------
 
@@ -39,7 +41,8 @@ USAGE: ./seam-carver <input-image> <output-directory> <number-of-iterations>
 
 The Seam Carver outputs a series of images that are useful for visualizing the resizing process. All the output images are stored inside of the specified output directory, which must already exist. The generated images are:
 
-- `img-energy.jpg` - a visualization of the energy functional of the input image.
+- `img-cost-l.jpg`, `img-cost-u.jpg`, `img-cost-r.jpg` - a visualization of the three cost functions defined across the entire image.
+
 - `img-seam-<iteration>.jpg` - visualizing the lowest energy seam in the result of the previous iteration (or the lowest energy seam in the original image in the case of `img-seam-0000.jpg`).
 
 - `img.jpg` - the final retargeted image after all the iterations have completed.
