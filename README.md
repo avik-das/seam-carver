@@ -52,3 +52,8 @@ USAGE: ./remove-vertical-seams.sh <input-image> <number-of-iterations>
 ```
 
 This repo contains a wrapper script, `remove-vertical-seams.sh`, that eases the use of the Seam Carving tool. The wrapper automatically cleans up the `out` directory and recreates the directory before running the Seam Carving tool. The wrapper also generates an `out/animation-seams.mp4` that animates how the retargeting proceeds from iteration to iteration.
+
+Forward energy variant
+----------------------
+
+The follow-up paper [Improved seam carving for video retargeting](https://dl.acm.org/citation.cfm?id=1360615) describes an improvement to the algorithm centered around what is called the "forward energy". This variation is implemented in [the `forward-energy` branch of this repository](https://github.com/avik-das/seam-carver/tree/forward-energy).
